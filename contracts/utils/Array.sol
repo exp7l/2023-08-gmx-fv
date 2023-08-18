@@ -142,16 +142,22 @@ library Array {
         uint256 bitmask,
         string memory label
     ) internal pure returns (uint256) {
+        // @note = 4  [[b0, b1, b2, b3], [b4, b5, b6, b7]] THIS IS WRONG INTERPERATION
         uint256 compactedValuesPerSlot = 256 / compactedValueBitLength;
 
+        // @note 4 / 4 = 1
         uint256 slotIndex = index / compactedValuesPerSlot;
         if (slotIndex >= compactedValues.length) {
             revert Errors.CompactedArrayOutOfBounds(compactedValues, index, slotIndex, label);
         }
 
+        // @note [b4, b5, b6, b7]
         uint256 slotBits = compactedValues[slotIndex];
+        // @note (4 - 1 * 4) * 64
         uint256 offset = (index - slotIndex * compactedValuesPerSlot) * compactedValueBitLength;
 
+        // @note bitmask is supposed to extract the lowest 64 bits.
+        // @note is encoded as [[b3, b2, b1, b0], [b7, b6, b5, b4]]
         uint256 value = (slotBits >> offset) & bitmask;
 
         return value;

@@ -20,10 +20,13 @@ library Uint256Mask {
 
         uint256 bit = 1 << index;
 
+        // @question I am not sure what this intends to do.
+        // @note Mechnically, this checks if the i-th bit is set on the signerIndexMask
         if (mask.bits & bit != 0) {
             revert Errors.DuplicatedIndex(index, label);
         }
 
+        // @note bitwise or puts in the masked bit, to mark as seen
         mask.bits = mask.bits | bit;
     }
 }

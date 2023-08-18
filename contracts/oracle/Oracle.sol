@@ -91,6 +91,7 @@ contract Oracle is RoleModule {
 
     OracleStore public oracleStore;
 
+    // @note clearAllPrices are expected to be called after setPrices
     // tokensWithPrices stores the tokens with prices that have been set
     // this is used in clearAllPrices to help ensure that all token prices
     // set in setPrices are cleared after use
@@ -201,16 +202,22 @@ contract Oracle is RoleModule {
         EventEmitter eventEmitter,
         OracleUtils.SetPricesParams memory params
     ) public virtual onlyController { /// @dev RP@Certora : external -> public, + virtual 
+        // @note This is meant to be clear with clearAllPrices.
         if (tokensWithPrices.length() != 0) {
             revert Errors.NonEmptyTokensWithPrices(tokensWithPrices.length());
         }
 
+        // @note There are 2 distinct fields: 
+        // @note tokens tokens to set prices for using data from params
+        // @note priceFeedTokens tokens to set prices for based on an external price feed value
         _setPricesFromPriceFeeds(dataStore, eventEmitter, params.priceFeedTokens);
 
+        // @note tokens and priceFeedTokens can both be empty
         // it is possible for transactions to be executed using just params.priceFeedTokens
         // in this case if params.tokens is empty, the function can return
         if (params.tokens.length == 0) { return; }
 
+        // @note There are 2 distinct fields
         _setPrices(
             dataStore,
             eventEmitter,
@@ -277,7 +284,7 @@ contract Oracle is RoleModule {
     // 1 / (10 ^ 6) * (10 ^ 30) => 1 * (10 ^ 24)
     // if the external price feed has 8 decimals, the price feed price would be 1 * (10 ^ 8)
     // in this case the priceFeedMultiplier should be 10 ^ 46
-    // the conversion of the price feed price would be 1 * (10 ^ 8) * (10 ^ 46) / (10 ^ 30) => 1 * (10 ^ 24)
+    // the conversion of the price feed price would be 1 * (10 ^ 8) * (10 ^ 46) / (10 ^ 30) => 1 * (10 ^ 24)    // @note 1 unit of USDC is 1 * (10 ** 24)
     // formula for decimals for price feed multiplier: 60 - (external price feed decimals) - (token decimals)
     //
     // @param dataStore DataStore
@@ -327,6 +334,7 @@ contract Oracle is RoleModule {
         ValidatedPrice[] memory validatedPrices = _validatePrices(dataStore, params);
 
         for (uint256 i = 0; i < validatedPrices.length; i++) {
+            // @note need token, min, max
             ValidatedPrice memory validatedPrice = validatedPrices[i];
 
             if (!primaryPrices[validatedPrice.token].isEmpty()) {
@@ -335,6 +343,7 @@ contract Oracle is RoleModule {
 
             emitOraclePriceUpdated(eventEmitter, validatedPrice.token, validatedPrice.min, validatedPrice.max, false);
 
+            // @note After validation and checking if tokensWithPrices is empty, _setPrimaryPrice is called, which can be called without validations.
             _setPrimaryPrice(validatedPrice.token, Price.Props(
                 validatedPrice.min,
                 validatedPrice.max
@@ -346,19 +355,73 @@ contract Oracle is RoleModule {
         DataStore dataStore,
         OracleUtils.SetPricesParams memory params
     ) internal view returns (ValidatedPrice[] memory) {
+        // @note Get signers from oracle store after checking params doesn't provide duplicate oracles, too many or too few.
         address[] memory signers = _getSigners(dataStore, params);
 
+        /* @note
+        struct SetPricesCache {
+            OracleUtils.ReportInfo info;
+            uint256 minBlockConfirmations;
+            uint256 maxPriceAge;
+            uint256 maxRefPriceDeviationFactor;
+            uint256 prevMinOracleBlockNumber;
+            ValidatedPrice[] validatedPrices;
+        }
+        */
         SetPricesCache memory cache;
 
         cache.validatedPrices = new ValidatedPrice[](params.tokens.length);
         cache.minBlockConfirmations = dataStore.getUint(Keys.MIN_ORACLE_BLOCK_CONFIRMATIONS);
         cache.maxPriceAge = dataStore.getUint(Keys.MAX_ORACLE_PRICE_AGE);
+        // @note key for the maximum oracle price deviation factor from the ref price
         cache.maxRefPriceDeviationFactor = dataStore.getUint(Keys.MAX_ORACLE_REF_PRICE_DEVIATION_FACTOR);
 
         for (uint256 i; i < params.tokens.length; i++) {
+            /* @note
+            struct ReportInfo {
+                uint256 minOracleBlockNumber;
+                uint256 maxOracleBlockNumber;
+                uint256 oracleTimestamp;
+                bytes32 blockHash;
+                address token;
+                bytes32 tokenOracleType;
+                uint256 precision;
+                uint256 minPrice;
+                uint256 maxPrice;
+            }
+            */
             OracleUtils.ReportInfo memory reportInfo;
+            /* @note
+            struct SetPricesInnerCache {
+                uint256 priceIndex;
+                uint256 signatureIndex;
+                uint256 minPriceIndex;
+                uint256 maxPriceIndex;
+                uint256[] minPrices;
+                uint256[] maxPrices;
+                Uint256Mask.Mask minPriceIndexMask;
+                Uint256Mask.Mask maxPriceIndexMask;
+            }
+            */
             SetPricesInnerCache memory innerCache;
 
+            /* @note
+            struct SetPricesParams {
+                uint256 signerInfo;
+                address[] tokens;
+                uint256[] compactedMinOracleBlockNumbers;
+                uint256[] compactedMaxOracleBlockNumbers;
+                uint256[] compactedOracleTimestamps;
+                uint256[] compactedDecimals;
+                uint256[] compactedMinPrices;
+                uint256[] compactedMinPricesIndexes;
+                uint256[] compactedMaxPrices;
+                uint256[] compactedMaxPricesIndexes;
+                bytes[] signatures;
+                address[] priceFeedTokens;
+            }
+            */
+            // @note Therefore, these are block numbers for the token 
             reportInfo.minOracleBlockNumber = OracleUtils.getUncompactedOracleBlockNumber(params.compactedMinOracleBlockNumbers, i);
             reportInfo.maxOracleBlockNumber = OracleUtils.getUncompactedOracleBlockNumber(params.compactedMaxOracleBlockNumbers, i);
 
@@ -368,10 +431,12 @@ contract Oracle is RoleModule {
 
             reportInfo.oracleTimestamp = OracleUtils.getUncompactedOracleTimestamp(params.compactedOracleTimestamps, i);
 
+            // @note setPrices only when min oracle block number is in the past
             if (reportInfo.minOracleBlockNumber > Chain.currentBlockNumber()) {
                 revert Errors.InvalidBlockNumber(reportInfo.minOracleBlockNumber, Chain.currentBlockNumber());
             }
 
+            // @note revert if the price is stale according to maxPriceAge from dataStore
             if (reportInfo.oracleTimestamp + cache.maxPriceAge < Chain.currentTimestamp()) {
                 revert Errors.MaxPriceAgeExceeded(reportInfo.oracleTimestamp, Chain.currentTimestamp());
             }
@@ -382,6 +447,7 @@ contract Oracle is RoleModule {
             }
             cache.prevMinOracleBlockNumber = reportInfo.minOracleBlockNumber;
 
+            // @note What is this block hash check for?
             if (Chain.currentBlockNumber() - reportInfo.maxOracleBlockNumber <= cache.minBlockConfirmations) {
                 reportInfo.blockHash = Chain.getBlockHash(reportInfo.maxOracleBlockNumber);
             }
@@ -394,6 +460,7 @@ contract Oracle is RoleModule {
             innerCache.minPrices = new uint256[](signers.length);
             innerCache.maxPrices = new uint256[](signers.length);
 
+            // @note i for tokens, j for signers
             for (uint256 j = 0; j < signers.length; j++) {
                 innerCache.priceIndex = i * signers.length + j;
                 innerCache.minPrices[j] = OracleUtils.getUncompactedPrice(params.compactedMinPrices, innerCache.priceIndex);
@@ -429,6 +496,9 @@ contract Oracle is RoleModule {
                     revert Errors.ArrayOutOfBoundsUint256(innerCache.maxPrices, innerCache.maxPriceIndex, "maxPrices");
                 }
 
+                // @question why are they the same length?
+                // @note because 1 signer reports 1 min and 1 max price
+                // @note validating for uniqueness
                 // since minPrices, maxPrices have the same length as the signers array
                 // and the signers array length is less than MAX_SIGNERS
                 // minPriceIndexMask and maxPriceIndexMask should be able to store the indexes
@@ -436,6 +506,7 @@ contract Oracle is RoleModule {
                 innerCache.minPriceIndexMask.validateUniqueAndSetIndex(innerCache.minPriceIndex, "minPriceIndex");
                 innerCache.maxPriceIndexMask.validateUniqueAndSetIndex(innerCache.maxPriceIndex, "maxPriceIndex");
 
+                // @note Finding maximum of minPrice and maxPrice
                 reportInfo.minPrice = innerCache.minPrices[innerCache.minPriceIndex];
                 reportInfo.maxPrice = innerCache.maxPrices[innerCache.maxPriceIndex];
 
@@ -443,6 +514,7 @@ contract Oracle is RoleModule {
                     revert Errors.InvalidSignerMinMaxPrice(reportInfo.minPrice, reportInfo.maxPrice);
                 }
 
+                // @note validate signatures
                 OracleUtils.validateSigner(
                     _getSalt(),
                     reportInfo,
@@ -480,6 +552,7 @@ contract Oracle is RoleModule {
             }
 
             cache.validatedPrices[i] = ValidatedPrice(
+                // @note only need token, min, max when this function is called internally
                 reportInfo.token, // token
                 medianMinPrice, // min
                 medianMaxPrice, // max
@@ -496,28 +569,36 @@ contract Oracle is RoleModule {
         DataStore dataStore,
         OracleUtils.SetPricesParams memory params
     ) internal view returns (address[] memory) {
+        // @audit Controller can submit prices without signatures
         // first 16 bits of signer info contains the number of signers
         address[] memory signers = new address[](params.signerInfo & Bits.BITMASK_16);
 
+        // @note This is checking whether the params says there is at least the minimum number of oracles.
         if (signers.length < dataStore.getUint(Keys.MIN_ORACLE_SIGNERS)) {
             revert Errors.MinOracleSigners(signers.length, dataStore.getUint(Keys.MIN_ORACLE_SIGNERS));
         }
 
+        // @note Checking against the maximum number of oracles.
         if (signers.length > MAX_SIGNERS) {
             revert Errors.MaxOracleSigners(signers.length, MAX_SIGNERS);
         }
 
+        // @question Is this for checking duplicates?
         Uint256Mask.Mask memory signerIndexMask;
 
         for (uint256 i; i < signers.length; i++) {
+            // @note 1010 & 0011 extracts the lowest 2 bits
             uint256 signerIndex = params.signerInfo >> (16 + 16 * i) & Bits.BITMASK_16;
 
+            // @note Checks if the extract index is strictly lower than 256
             if (signerIndex >= MAX_SIGNER_INDEX) {
                 revert Errors.MaxSignerIndex(signerIndex, MAX_SIGNER_INDEX);
             }
 
+            // @note Validate signerIndex is NOT SEEN, revert if seen
             signerIndexMask.validateUniqueAndSetIndex(signerIndex, "signerIndex");
 
+            // @note copy signer's address to memory
             signers[i] = oracleStore.getSigner(signerIndex);
 
             if (signers[i] == address(0)) {
@@ -563,6 +644,9 @@ contract Oracle is RoleModule {
         tokensWithPrices.remove(token);
     }
 
+    // @note This IS MEANT TO BE FOR TMEPORARY USE.
+    // @question Is _setPrice called every block? There is 2MM seconds per month, USDT trasnfer costs $0.1 each. Or is 
+    // @question it just faster than the price feed price?
     // there is a small risk of stale pricing due to latency in price updates or if the chain is down
     // this is meant to be for temporary use until low latency price feeds are supported for all tokens
     function _getPriceFeedPrice(DataStore dataStore, address token) internal view returns (bool, uint256) {
@@ -585,14 +669,18 @@ contract Oracle is RoleModule {
             revert Errors.InvalidFeedPrice(token, _price);
         }
 
+        // @note The amount of time that a price feed price is good for.
         uint256 heartbeatDuration = dataStore.getUint(Keys.priceFeedHeartbeatDurationKey(token));
         if (Chain.currentTimestamp() > timestamp && Chain.currentTimestamp() - timestamp > heartbeatDuration) {
             revert Errors.PriceFeedNotUpdated(token, timestamp, heartbeatDuration);
         }
 
         uint256 price = SafeCast.toUint256(_price);
+        // @note This gets price feed multiplier from the datastore.
         uint256 precision = getPriceFeedMultiplier(dataStore, token);
 
+        // @note As per comment above setPrices, price is stored in uint32 and needs to be scaled up by the mulitplier to get a correct price.
+        // @question is: does the signed price need to be scaled up? See their comments for setPrices, which says the signed prices are uint32 and signed with a precision.
         uint256 adjustedPrice = Precision.mulDiv(price, precision, Precision.FLOAT_PRECISION);
 
         return (true, adjustedPrice);
@@ -603,9 +691,12 @@ contract Oracle is RoleModule {
     // @param eventEmitter EventEmitter
     // @param priceFeedTokens the tokens to set the prices using the price feeds for
     function _setPricesFromPriceFeeds(DataStore dataStore, EventEmitter eventEmitter, address[] memory priceFeedTokens) internal {
+        // @note Empty priceFeedTokens is just noop
         for (uint256 i; i < priceFeedTokens.length; i++) {
             address token = priceFeedTokens[i];
 
+            // @note primaryPrices can ONLY BE SET ONCE! primaryPrices is a mapping. primaryPrices[token] is a struct with min and max.
+            // @question what if min and max are 0 from the price feed?
             if (!primaryPrices[token].isEmpty()) {
                 revert Errors.PriceAlreadySet(token, primaryPrices[token].min, primaryPrices[token].max);
             }
@@ -616,12 +707,14 @@ contract Oracle is RoleModule {
                 revert Errors.EmptyPriceFeed(token);
             }
 
+            // @question What is this notion of stable price in the context of setting price from price feed?
             uint256 stablePrice = getStablePrice(dataStore, token);
 
             Price.Props memory priceProps;
 
             if (stablePrice > 0) {
                 priceProps = Price.Props(
+                    // @note the small becomes the min
                     price < stablePrice ? price : stablePrice,
                     price < stablePrice ? stablePrice : price
                 );
