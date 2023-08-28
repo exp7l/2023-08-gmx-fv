@@ -79,6 +79,9 @@ rule validateSignerConsistency() {
         "Revert characteristics of validateSigner are not consistent";
 }
 
+// ISSUE:
+// https://github.com/exp7l/2023-08-gmx-fv/issues/1
+//
 // COMMAND:
 //
 // certoraRun certora/confs/oracle_violated.conf --rule getPrimaryPriceComplyPrecision --prover_args '-s z3 -copyLoopUnroll 5 -mediumTimeout 1 -depth 30 -dontStopAtFirstSplitTimeout true'
