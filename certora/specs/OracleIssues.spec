@@ -4,13 +4,14 @@ methods {
     function _.getAddress(bytes32) external => DISPATCHER(true);
     function _.getBytes32(bytes32) external => DISPATCHER(true);
     // RoleStore
-    function _.hasRole(address,bytes32) external => DISPATCHER(true);
+    // function _.hasRole(address,bytes32) external => DISPATCHER(true);
+    function _.hasRole(address,bytes32) external => ALWAYS(true);
     // OracleStore
     function _.getSigner(uint256) external => DISPATCHER(true);
     // PriceFeed
     function _.latestRoundData() external => DISPATCHER(true);
     /// Chain
-    function _.arbBlockNumber() external => ghostBlockNumber() expect uint256 ALL;
+    // function _.arbBlockNumber() external => ghostBlockNumber() expect uint256 ALL;n
     function _.arbBlockHash(uint256 blockNumber) external => ghostBlockHash(blockNumber) expect bytes32 ALL;
     /// Oracle summaries
     function Oracle._getSalt() internal returns bytes32 => mySalt();
@@ -20,6 +21,16 @@ methods {
     function OracleHarness.secondaryPrices(address) external returns (uint256,uint256);
     function OracleHarness.customPrices(address) external returns (uint256,uint256);
     function OracleHarness.getSignerByInfo(uint256, uint256) external returns (address);
+
+
+    function _.getRoleMembers(bytes32,uint256,uint256) external => DISPATCHER(true);
+    function _.arbBlockNumber() external => ALWAYS(42);
+
+    function signaturesCount() external returns uint256 envfree;
+    function tokensCount() external returns uint256 envfree;
+    function someController() external returns address envfree;
+    function firstToken() external returns address envfree;
+    function firstUncompactedMinPrice() external returns uint256 envfree;
 }
 
 ghost mySalt() returns bytes32;
@@ -31,6 +42,10 @@ ghost ghostBlockNumber() returns uint256 {
 ghost ghostBlockHash(uint256) returns bytes32 {
     axiom forall uint256 num1. forall uint256 num2. 
         num1 != num2 => ghostBlockHash(num1) != ghostBlockHash(num2);
+}
+
+function e_block_number(env e) returns uint256 {
+    return 42;
 }
 
 function ghostMedian(uint256[] array) returns uint256 {
@@ -63,3 +78,34 @@ rule validateSignerConsistency() {
     assert (salt1 == salt2 && signer1 == signer2) => !lastReverted,
         "Revert characteristics of validateSigner are not consistent";
 }
+
+
+// command to run: certoraRun certora/confs/oracle_violated.conf --rule getPrimaryPriceComplyPrecision --prover_args '-s z3 -copyLoopUnroll 5 -mediumTimeout 1 -depth 30 -dontStopAtFirstSplitTimeout true'
+// example run: https://prover.certora.com/output/61075/610d9ad69e95439797b32ec7134c712a/?anonymousKey=8092d1ad2a98f9bb6b04d8839f0758d741b2f6c6
+rule getPrimaryPriceComplyPrecision {
+    // Variables
+    env e;
+    address dataStore;
+    address eventEmitter;
+    uint256 minPrice;
+
+    // Caller is a Controller
+    require e.msg.sender == someController();
+
+    // There is one signature, so median for this token equals to the min
+    require tokensCount() == 1;
+    require signaturesCount() == 1;
+
+    setPrices(e, dataStore, eventEmitter, minPrice);
+
+    // Rule: The price should be stored in uncompacted format
+    
+    address token = firstToken();
+    uint precision = getPriceFeedMultiplier(e, dataStore, token);
+    Price.Props price = getPrimaryPrice(e, token);
+    
+    assert assert_uint256(minPrice * precision / 10 ^ 30) == price.min;
+    
+}
+
+

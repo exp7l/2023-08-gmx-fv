@@ -22,8 +22,8 @@ contract OracleStoreHarness is OracleStore {
     function getSignerSetValues() public view returns (address[] memory) {
         return signers.values();
     }
+    
     function getSignerSetIndexFor(address addr) public view returns (uint256) {
         return signers._inner._indexes[bytes32(uint256(uint160(addr)))];
     }
-
 }

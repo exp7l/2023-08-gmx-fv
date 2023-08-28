@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import {Oracle, DataStore, EventEmitter, RoleStore, OracleStore} from "../../contracts/oracle/Oracle.sol";
 import {OracleUtils} from "../../contracts/oracle/OracleUtils.sol";
 import {Bits} from "../../contracts/utils/Bits.sol";
+import {Role} from "../../contracts/role/RoleStore.sol";
 
 contract OracleHarness is Oracle {
 
@@ -34,17 +35,12 @@ contract OracleHarness is Oracle {
         myEventEmitter = _eventEmitter;
     }
 
-    function setPrices(
-        DataStore,
-        EventEmitter,
-        OracleUtils.SetPricesParams memory
-    ) public override {
-        super.setPrices(myDataStore, myEventEmitter, _prepareParams());
-    }
-
-    function _prepareParams() internal view returns (OracleUtils.SetPricesParams memory params) {
+    function _prepareParams(uint256 minPrice) internal view returns (OracleUtils.SetPricesParams memory params) {
         require(mySignerInfo & Bits.BITMASK_16 > 0);
         //require(myTokens.length > 0);
+	uint256[] memory compactedMinPrices = new uint256[](1);
+	compactedMinPrices[0] = minPrice;
+	
         params = 
         OracleUtils.SetPricesParams(
             mySignerInfo,
@@ -53,13 +49,23 @@ contract OracleHarness is Oracle {
             myCompactedMaxOracleBlockNumbers,
             myCompactedOracleTimestamps,
             myCompactedDecimals,
-            myCompactedMinPrices,
+	    compactedMinPrices,
             myCompactedMinPricesIndexes,
             myCompactedMaxPrices,
             myCompactedMaxPricesIndexes,
             mySignatures,
             myPriceFeedTokens
         );
+    }
+
+// https://prover.certora.com/output/61075/610d9ad69e95439797b32ec7134c712a?anonymousKey=8092d1ad2a98f9bb6b04d8839f0758d741b2f6c6
+
+    function setPrices(
+        DataStore,
+        EventEmitter,
+	uint256 minPrice
+    ) public {
+        super.setPrices(myDataStore, myEventEmitter, _prepareParams(minPrice));
     }
 
     function getStablePrice(DataStore, address token) public view override returns (uint256) {
@@ -83,4 +89,39 @@ contract OracleHarness is Oracle {
     ) external view {
         OracleUtils.validateSigner(SALT, myReportInfo, signature, expectedSigner);
     }
+
+    function someController() external view returns (address) {
+        return roleStore.getRoleMembers(Role.CONTROLLER, 0, 1)[0];
+    }
+
+    function tokensCount() public returns (uint256) {
+    	return myTokens.length;
+    }
+
+    function signaturesCount() public returns (uint256) {
+    	return mySignatures.length;
+    }
+
+    function firstToken() public returns (address) {
+    	return myTokens[0];
+    }
+
+    function myCompactedMinPricesFn() public returns (uint256[] memory) {
+        return myCompactedMinPrices;
+    }
+
+    function firstUncompactedMinPrice() public returns (uint256) {
+    	return getUncompactedPrice(myCompactedMinPrices, 0);
+    }
+
+    function getUncompactedPrice(uint256[] memory compactedPrices, uint256 index) public returns (uint256) {
+    	return OracleUtils.getUncompactedPrice(compactedPrices, index);
+    }
 }
+
+
+
+
+
+
+
