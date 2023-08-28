@@ -79,9 +79,30 @@ rule validateSignerConsistency() {
         "Revert characteristics of validateSigner are not consistent";
 }
 
-
-// command to run: certoraRun certora/confs/oracle_violated.conf --rule getPrimaryPriceComplyPrecision --prover_args '-s z3 -copyLoopUnroll 5 -mediumTimeout 1 -depth 30 -dontStopAtFirstSplitTimeout true'
-// example run: https://prover.certora.com/output/61075/610d9ad69e95439797b32ec7134c712a/?anonymousKey=8092d1ad2a98f9bb6b04d8839f0758d741b2f6c6
+// COMMAND:
+//
+// certoraRun certora/confs/oracle_violated.conf --rule getPrimaryPriceComplyPrecision --prover_args '-s z3 -copyLoopUnroll 5 -mediumTimeout 1 -depth 30 -dontStopAtFirstSplitTimeout true'
+//
+// EXAMPLE:
+//
+// https://prover.certora.com/output/61075/610d9ad69e95439797b32ec7134c712a/?anonymousKey=8092d1ad2a98f9bb6b04d8839f0758d741b2f6c6
+// 
+// RULE:
+//
+// The following verifies that setPrices uncompacts and stores prices correctly.
+// 
+// From the comments of setPrices:
+// '''Oracle prices are signed as a value together with a precision, this allows
+// prices to be compacted as uint32 values.
+// The signed prices represent the price of one unit of the token using a value
+// with 30 decimals of precision.'''
+// 
+// As per comment of setPrices, setPrices should uncompact the signed uint32s in the parameters and scale by 10 ^ 30. and a predefinied precision. But, the code doesn't do these because the code doesn't enforce precision and trust the inputs. [2]
+// The trusted oracles can inadvertently or maliciously provide price updates that are
+// of the wrong precision if there is no external price feed [1].
+// 
+// [1]: https://github.com/exp7l/2023-08-gmx-fv/blob/40a44b01f8c69c9a58c17df0dd85c6455d9a8038/contracts/oracle/Oracle.sol#L530
+// [2]: https://github.com/exp7l/2023-08-gmx-fv/blob/40a44b01f8c69c9a58c17df0dd85c6455d9a8038/contracts/oracle/Oracle.sol#L526
 rule getPrimaryPriceComplyPrecision {
     // Variables
     env e;
@@ -98,7 +119,7 @@ rule getPrimaryPriceComplyPrecision {
 
     setPrices(e, dataStore, eventEmitter, minPrice);
 
-    // Rule: The price should be stored in uncompacted format
+    // Assert the price should be stored in uncompacted format
     
     address token = firstToken();
     uint precision = getPriceFeedMultiplier(e, dataStore, token);
